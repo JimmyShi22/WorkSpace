@@ -1,38 +1,8 @@
 #!/bin/bash
+set -e
 
-# This script download latest tars of FISCO-BCOS and console
-# bash download_tar.sh output_path
-# */20 * * * * bash /data/app/cdn/download_tar.sh -p /data/app/cdn/ -f > /data/app/cdn/download.log 2>&1
-# */20 * * * * bash /data/app/cdn/download_tar.sh -p /data/app/cdn/ -c > /data/app/cdn/download.log 2>&1
-
-output_dir=./
-download_repo=()
-timeout=250
-console_timeout=1000
-
-#set -e
-
-failed_clean()
-{
-    local path=${1}
-    echo "failed, clean ${path}"
-    rm -rf ${path}
-    exit 1
-}
-
-help() {
-    echo $1
-    cat << EOF
-Usage:
-    -p <Download Path>                  [Required] 
-    -f <Download fisco-bcos>            Include fisco-bcos.tar.gz fisco-bcos-gm.tar.gz fisco-bcos-macOS.tar.gz
-    -c <Download console>               Include console.tar.gz
-    -h Help
-e.g 
-    $0 -p ~/data -f -c
-EOF
-exit 0
-}
+compatibility_version=
+enable_build_from_resource=0
 
 LOG_INFO()
 {
@@ -46,133 +16,135 @@ LOG_ERROR()
     echo -e "\033[31m[ERROR] ${content}\033[0m"
 }
 
-parse_params()
+help()
 {
-while getopts "p:cfwh" option;do
-    case $option in
-    p) output_dir=$OPTARG;;
-    f) download_repo+=('FISCO-BCOS');;
-    c) download_repo+=('console');;
-    w) download_repo+=('wecross');;
-    h) help;;
+    echo "$1"
+    cat << EOF
+Usage:
+    -s                              [Optional] Get wecross by: gradle build from github Source Code.
+    -h  call for help
+e.g
+    bash $0 
+    bash $0 -s 
+EOF
+exit 0
+}
+
+
+parse_command()
+{
+while getopts "sh" option;do
+    # shellcheck disable=SC2220
+    case ${option} in
+    s)
+        enable_build_from_resource=1
+    ;;
+    h)  help;;
     esac
 done
+
 }
 
-download_fisco_artifacts()
+parallel_download()
 {
-    local version=${1}
-    local from=https://github.com/FISCO-BCOS/FISCO-BCOS/releases/download/v${version}
-    local to=${output_dir}/fisco-bcos/releases/download/v${version}
-    mkdir -p ${to}
-    local tars=(fisco-bcos.tar.gz fisco-bcos-gm.tar.gz fisco-bcos-macOS.tar.gz)
-    for file in ${tars[*]}
-    do
-        curl -Lo ${to}/${file} ${from}/${file} -m ${timeout} || failed_clean ${to}
-    done
-}
-
-download_fisco()
-{
-    local latest_version=$(curl -s https://api.github.com/repos/FISCO-BCOS/FISCO-BCOS/releases | grep "tag_name" | grep "\"v2\.[0-9]\.[0-9]\"" | sort -u | tail -n 1 | cut -d \" -f 4 | sed "s/^[vV]//")
-    mkdir -p ${output_dir}/fisco-bcos/releases/download/
-    local local_latest=$(ls -1 ${output_dir}/fisco-bcos/releases/download/ | sort -u | tail -n 1)
-    if [ "v${latest_version}" != "${local_latest}" ];then
-        LOG_INFO "latest fisco-bcos is v${latest_version}, downloading fisco-bcos v${latest_version} ..."
-        download_fisco_artifacts ${latest_version}
-    else
-        LOG_INFO "latest fisco-bcos is v${latest_version}, local has ${output_dir}/fisco-bcos/releases/download/v${latest_version}"
+    #parallel_download WeCross.tar.bz2.md5 https://github.com/WeBankFinTech/WeCross/releases/download/${compatibility_version}
+    md5_file_list=${1}
+    prefix=${2}
+    # shellcheck disable=SC2162
+    
+    while read line;do
+        local part=$(echo ${line}|awk '{print $2}')
+        curl -s -C - -LO ${prefix}/${part} &
+    done < "${md5_file_list}"   
+    wait
+    
+    if [ ! -z "$(md5sum -c ${md5_file_list}|grep FAILED)" ];then
+        LOG_ERROR "Download WeCross package failed! URL: ${prefix}"
+        exit 1
     fi
 }
 
-download_console()
+download_wecross_pkg()
 {
-    local repo=FISCO-BCOS/console
-    local latest_version=$(curl -s https://api.github.com/repos/${repo}/releases/latest | grep "tag_name" | sort -u | tail -n 1 | cut -d \" -f 4 | sed "s/^[vV]//")
-    mkdir -p ${output_dir}/console/releases/download/
-    local local_latest=$(ls -1 ${output_dir}/console/releases/download/ | sort -u | tail -n 1)
-    local dist_dir=${output_dir}/console/releases/download/v${latest_version}
-    if [ "v${latest_version}" != "${local_latest}" ];then
-        LOG_INFO "latest console is v${latest_version}, downloading console v${latest_version} ..."
-        mkdir -p ${dist_dir}
-        curl -Lo ${dist_dir}/console.tar.gz https://github.com/${repo}/releases/download/v${latest_version}/console.tar.gz -m ${console_timeout} || failed_clean ${dist_dir}
-    else
-        LOG_INFO "latest console is v${latest_version}, local has ${dist_dir}"
+    if [ -d WeCross/apps ];then
+        LOG_INFO "./WeCross/ exists"
+        exit 0
     fi
-}
 
-download_wecross()
-{
     LOG_INFO "Checking latest release"
-
-    local compatibility_version=
-    local latest_wecross=WeCross.tar.gz
-    local latest_wecross_checksum_file=WeCross.tar.gz.md5
-
-    # fetch latest version
     if [ -z "${compatibility_version}" ];then
         compatibility_version=$(curl -s https://api.github.com/repos/WeBankFinTech/WeCross/releases/latest | grep "tag_name"|awk -F '\"' '{print $4}')
     fi
 
-    local dist_dir=${output_dir}/wecross/releases/download/${compatibility_version}
-    local dist_tmp=${dist_dir}/.tmp/
-    mkdir -p ${dist_tmp}
+    latest_wecross=WeCross.tar.gz
+    latest_wecross_checksum_file=WeCross.tar.gz.md5
     LOG_INFO "Latest release: ${compatibility_version}"
 
 
-    # download md5 checksum
+    # in case network is broken
+    #if [ -z "${compatibility_version}" ];then
+    #    compatibility_version="${default_version}"
+    #fi
     curl -LO https://github.com/WeBankFinTech/WeCross/releases/download/${compatibility_version}/${latest_wecross_checksum_file}
-    if [ ! -e ${latest_wecross_checksum_file} ];then
-        LOG_ERROR "Download WeCross checksum failed! URL: https://github.com/WeBankFinTech/WeCross/releases/download/${compatibility_version}/${latest_wecross_checksum_file}"
-        exit 1
-    fi
-    cp ${latest_wecross_checksum_file} ${dist_tmp}
-    
-    # download wecross tar
-    cd ${dist_tmp}
+
     if [ ! -e ${latest_wecross} ] || [ -z "$(md5sum -c ${latest_wecross_checksum_file}|grep OK)" ];then
         LOG_INFO "Download from: https://github.com/WeBankFinTech/WeCross/releases/download/${compatibility_version}/${latest_wecross}"
         curl -C - -LO https://github.com/WeBankFinTech/WeCross/releases/download/${compatibility_version}/${latest_wecross}
 
-        # check checksum
+
         if [ -z "$(md5sum -c ${latest_wecross_checksum_file}|grep OK)" ];then
             LOG_ERROR "Download WeCross package failed! URL: https://github.com/WeBankFinTech/WeCross/releases/download/${compatibility_version}/${latest_wecross}"
             rm -f ${latest_wecross}
-            cd -
             exit 1
         fi
-
-        # publish
-        cp -f ${latest_wecross} ${latest_wecross_checksum_file} ../
 
     else
         LOG_INFO "Latest release ${latest_wecross} exists."
     fi
-    cd -
+
+    tar -zxf ${latest_wecross}
+}
+
+build_from_source()
+{
+    if [ -d WeCross/apps ];then
+        LOG_INFO "./WeCross/ exists"
+        exit 0
+        return
+    fi
+
+    git clone https://github.com/WeBankFinTech/WeCross.git
+    cd WeCross
+    ./gradlew assemble 2>&1 | tee output.log
+    # shellcheck disable=SC2046
+    # shellcheck disable=SC2006
+    if [ `grep -c "BUILD SUCCESSFUL" output.log` -eq '0' ]; then
+        LOG_ERROR "Build Wecross project failed"
+        LOG_INFO "See output.log for details"
+        mv output.log ../output.log
+        cd ..
+        exit 1
+    fi
+    cd ..
+    mv WeCross WeCross-Source
+    mv WeCross-Source/dist WeCross
+    rm -rf WeCross-Source
 }
 
 main()
 {
-    for repo in ${download_repo[*]} 
-    do
-        case $repo in 
-        FISCO-BCOS)
-            download_fisco
-            ;;
-        console)
-            download_console
-            ;;
-        wecross)
-            download_wecross
-            ;;
-        *)
-            echo "unknow repo"
-            ;;
-        esac
-    done
+    if [ 1 -eq ${enable_build_from_resource} ];then
+        build_from_source
+    else
+        download_wecross_pkg
+    fi
 }
 
-echo "======== start at $(date +"%Y-%m-%d %H:%M:%S") ========"
-parse_params $@
+print_result()
+{
+LOG_INFO "Download completed. WeCross is in: ./WeCross/"
+}
+
+parse_command $@
 main
-echo "======== exit at $(date +"%Y-%m-%d %H:%M:%S") ========"
+print_result
