@@ -28,12 +28,12 @@ help() {
     echo $1
     cat << EOF
 Usage:
-    -p <Download Path>                  [Required] 
+    -p <Download Path>                  [Required]
     -f <Download fisco-bcos>            Include fisco-bcos.tar.gz fisco-bcos-gm.tar.gz fisco-bcos-macOS.tar.gz
     -c <Download console>               Include console.tar.gz
     -w <Download WeCross>               Include WeCross.tar.gz WeCross-Console.tar.gz
     -h Help
-e.g 
+e.g
     $0 -p ~/data -f -c
 EOF
 exit 0
@@ -136,7 +136,7 @@ download_wecross()
         return
     fi
     cp ${latest_wecross_checksum_file} ${dist_tmp}
-    
+
     # download wecross tar
     cd ${dist_tmp}
     if [ ! -e ${latest_wecross} ] || [ -z "$(md5sum -c ${latest_wecross_checksum_file}|grep OK)" ];then
@@ -173,7 +173,7 @@ download_all_wecross()
     fi
 
     for compatibility_version in ${compatibility_versions[@]}
-	do    
+	do
         download_wecross ${compatibility_version}
     done
 }
@@ -199,7 +199,7 @@ download_wecross_console()
         return
     fi
     cp ${latest_wecross_checksum_file} ${dist_tmp}
-    
+
     # download wecross tar
     cd ${dist_tmp}
     if [ ! -e ${latest_wecross} ] || [ -z "$(md5sum -c ${latest_wecross_checksum_file}|grep OK)" ];then
@@ -232,20 +232,83 @@ download_all_wecross_console()
 
     # fetch latest version
     if [ -z "${compatibility_versions}" ];then
-        compatibility_versions=($(curl -s https://api.github.com/repos/${wecross_repo}/WeCross-Console/releases | grep "tag_name"|awk -F '\"' '{print $4}'))
+        compatibility_versions=($(curl -s https://api.github.com/repos/${wecross_repo}/WeCross/releases | grep "tag_name"|awk -F '\"' '{print $4}'))
     fi
 
     for compatibility_version in ${compatibility_versions[@]}
-	do    
+	do
         download_wecross_console ${compatibility_version}
+    done
+}
+
+download_wecross_demo()
+{
+    LOG_INFO "Checking WeCross Demo latest release"
+
+    local compatibility_version=${1}
+    local download_url=https://github.com/${wecross_repo}/WeCross/releases/download/
+    local latest_wecross=demo.tar.gz
+    local latest_wecross_checksum_file=demo.tar.gz.md5
+    local dist_dir=${output_dir}/wecross/releases/download/${compatibility_version}
+    local dist_tmp=${dist_dir}/.tmp/
+    mkdir -p ${dist_tmp}
+    LOG_INFO "Download WeCross Demo release: ${compatibility_version}"
+
+
+    # download md5 checksum
+    curl -LO ${download_url}/${compatibility_version}/${latest_wecross_checksum_file}
+    if [ ! -e ${latest_wecross_checksum_file} ];then
+        LOG_ERROR "Download WeCross Demo checksum failed! URL: ${download_url}/${compatibility_version}/${latest_wecross_checksum_file}"
+        return
+    fi
+    cp ${latest_wecross_checksum_file} ${dist_tmp}
+
+    # download wecross demo tar
+    cd ${dist_tmp}
+    if [ ! -e ${latest_wecross} ] || [ -z "$(md5sum -c ${latest_wecross_checksum_file}|grep OK)" ];then
+        LOG_INFO "Download from: ${download_url}/${compatibility_version}/${latest_wecross}"
+        curl -LO ${download_url}/${compatibility_version}/${latest_wecross}
+
+        # check checksum
+        if [ -z "$(md5sum -c ${latest_wecross_checksum_file}|grep OK)" ];then
+            LOG_ERROR "Download WeCross demo package failed! URL: ${download_url}/${compatibility_version}/${latest_wecross}"
+            cd -
+            return
+        fi
+
+    else
+        LOG_INFO "Release ${latest_wecross} exists."
+    fi
+
+    # publish
+    if [ ! -e ../${latest_wecross_checksum_file} ] || [ ! -z "$(diff -q ${latest_wecross_checksum_file}  ../${latest_wecross_checksum_file})" ]; then
+        cp -f ${latest_wecross} ${latest_wecross_checksum_file} ../
+    fi
+    cd -
+}
+
+download_all_wecross_demo()
+{
+    LOG_INFO "Checking all WeCross Demo releases"
+
+    local compatibility_versions=
+
+    # fetch latest version
+    if [ -z "${compatibility_versions}" ];then
+        compatibility_versions=($(curl -s https://api.github.com/repos/${wecross_repo}/WeCross/releases | grep "tag_name"|awk -F '\"' '{print $4}'))
+    fi
+
+    for compatibility_version in ${compatibility_versions[@]}
+	do
+        download_wecross_demo ${compatibility_version}
     done
 }
 
 main()
 {
-    for repo in ${download_repo[*]} 
+    for repo in ${download_repo[*]}
     do
-        case $repo in 
+        case $repo in
         FISCO-BCOS)
             download_fisco
             ;;
@@ -256,8 +319,9 @@ main()
             download_largefiles
             ;;
         wecross)
-            download_all_wecross
-            download_all_wecross_console
+            # download_all_wecross
+            # download_all_wecross_console
+            download_all_wecross_demo
             ;;
         *)
             echo "unknow repo"
